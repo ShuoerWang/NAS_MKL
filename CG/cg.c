@@ -46,6 +46,8 @@ c---------------------------------------------------------------------
 
 #include "npb-C.h"
 #include "npbparams.h"
+#include <mkl.h>
+#include<string.h>
 
 #define	NZ	NA*(NONZER+1)*(NONZER+1)+NA*(NONZER+2)
 
@@ -80,6 +82,7 @@ static double r[NA+2+1];	/* r[1:NA+2] */
 /* common /urando/ */
 static double amult;
 static double tran;
+double temp = 1;
 
 /* function declarations */
 static void conj_grad (int colidx[], int rowstr[], double x[], double z[],
@@ -102,8 +105,34 @@ static void vecset(int n, double v[], int iv[], int *nzv, int i, double val);
 /*--------------------------------------------------------------------
       program cg
 --------------------------------------------------------------------*/
+int monotonicity(int rowstr[]) {
+    int prev = 0;
+    for(int i = 1; i < NA+2; i++) {
+        if (rowstr[i] < prev) {
+            return 0;
+        }
+        prev = rowstr[i];
+    }
+    return 1;
+}
+
+int check_and_run(int colidx[], int rowstr[], double a[], double p[], double *q) {
+    if (!monotonicity(rowstr)) {
+        return 0;
+    }
+    sparse_matrix_t A;
+    mkl_sparse_d_create_csr(&A, SPARSE_INDEX_BASE_ZERO, NA, NA, rowstr+1, rowstr+2, colidx, a);
+
+    double alpha = 1.0, beta = 0.0;
+    struct matrix_descr descr = {SPARSE_MATRIX_TYPE_GENERAL};
+    mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, alpha, A, descr, p, beta, q+1);
+
+    mkl_sparse_destroy(A);
+    return 1;
+}
 
 int main(int argc, char **argv) {
+
     int	i, j, k, it;
     int nthreads = 1;
     double zeta;
@@ -402,6 +431,9 @@ c-------------------------------------------------------------------*/
       rho0 = rho;
       d = 0.0;
       rho = 0.0;
+
+int mkl = check_and_run(colidx, rowstr, a, p, q);
+
 #pragma omp parallel default(shared) private(j,k,sum,alpha,beta) shared(d,rho0,rho)
 {
       
@@ -419,7 +451,8 @@ C        on the Cray t3d - overall speed of code is 1.5 times faster.
 */
 
 /* rolled version */    
-#pragma omp for 
+if (!mkl){
+	#pragma omp for 
 	for (j = 1; j <= lastrow-firstrow+1; j++) {
             sum = 0.0;
 	    for (k = rowstr[j]; k < rowstr[j+1]; k++) {
@@ -428,6 +461,7 @@ C        on the Cray t3d - overall speed of code is 1.5 times faster.
             //w[j] = sum;
             q[j] = sum;
 	}
+}
 	
 /* unrolled-by-two version
 #pragma omp for private(i,k)
