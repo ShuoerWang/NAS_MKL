@@ -105,19 +105,42 @@ static void vecset(int n, double v[], int iv[], int *nzv, int i, double val);
 /*--------------------------------------------------------------------
       program cg
 --------------------------------------------------------------------*/
-int monotonicity(int rowstr[]) {
-    int prev = 0;
-    for(int i = 1; i < NA+2; i++) {
-        if (rowstr[i] < prev) {
-            return 0;
-        }
-        prev = rowstr[i];
+// int monotonicity(int rowstr[]) {
+//     int prev = 0;
+//     for(int i = 1; i < NA+2; i++) {
+//         if (rowstr[i] < prev) {
+//             return 0;
+//         }
+//         prev = rowstr[i];
+//     }
+//     return 1;
+// }
+
+int check_csr(int colidx[], int rowstr[]) {
+    int valid_row = 1;
+    int valid_col = 1;
+    #pragma omp parallel for reduction(&&: valid_row)
+    for (int i = 1; i < NA+1; i++) {
+        valid_row = valid_row && (rowstr[i] < rowstr[i+1]);
     }
-    return 1;
+
+    if (!valid_row) {
+        return 0;
+    }
+
+    #pragma omp parallel for reduction(&&: valid_col)
+    for (int i = 1; i < NA+1; i++) {
+        int valid_col_local = 1;
+        for (int j = rowstr[i]; j < rowstr[i+1]-1; j++) {
+            valid_col_local = valid_col_local && (colidx[j] < colidx[j+1]);
+        }
+        valid_col = valid_col && valid_col_local;
+    }
+    return valid_col;
 }
 
 int check_and_run(int colidx[], int rowstr[], double a[], double p[], double *q) {
-    if (!monotonicity(rowstr)) {
+    if (!check_csr(colidx, rowstr)) {
         return 0;
     }
     sparse_matrix_t A;
@@ -433,6 +456,7 @@ c-------------------------------------------------------------------*/
       rho = 0.0;
 
 int mkl = check_and_run(colidx, rowstr, a, p, q);
+// int mkl = 0;
 
 #pragma omp parallel default(shared) private(j,k,sum,alpha,beta) shared(d,rho0,rho)
 {
